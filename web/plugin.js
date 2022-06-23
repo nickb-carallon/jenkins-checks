@@ -41,7 +41,7 @@ export class JenkinsFetcher {
 
         // fetch the job info from Jenkins
         const changeJob = this.convertToJenkinsJob(changeNumber, patchsetNumber);
-        const jobResponse = await this.doJenkinsFetch(changeJob, "api/json?tree=name,url,buildable,inQueue,builds[building,duration,timestamp,result,number]")
+        const jobResponse = await this.doJenkinsFetch(changeJob, "api/json?tree=name,url,buildable,inQueue,builds[building,duration,estimatedDuration,timestamp,result,number]")
         if (!jobResponse.ok) {
             // just return an empty response on an error
             return result;
@@ -88,12 +88,12 @@ export class JenkinsFetcher {
         }
 
         if (build == null) {
-            run.status = RunStatus.RUNNABLE;
+            run.status = job.inQueue ? RunStatus.SCHEDULED : RunStatus.RUNNABLE;
         } else {
             run.attempt = build.number;
-            run.status = (build.building ? RunStatus.RUNNING : RunStatus.COMPLETED);
-            run.startedTimestamp = build.timestamp;
-            run.finishedTimestamp = build.timestamp + build.duration;
+            run.status = (job.inQueue ? RunStatus.SCHEDULED : (build.building ? RunStatus.RUNNING : RunStatus.COMPLETED));
+            run.startedTimestamp = new Date(build.timestamp);
+            run.finishedTimestamp = new Date(build.timestamp + (build.building ? build.estimatedDuration : build.duration));
             if (build.building) {
                 run.actions.push(
                     {
@@ -130,6 +130,12 @@ export class JenkinsFetcher {
                             category: Category.ERROR,
                             summary: 'Build failed'
                         }];
+                    }
+                    if (build.result == "SUCCESS") {
+                        return [{
+                            category: Category.SUCCESS,
+                            summery: 'Build was successfully completed'
+                        }]
                     }
                 }
                 // for builds in progess, and those that completed successfully, return no results
