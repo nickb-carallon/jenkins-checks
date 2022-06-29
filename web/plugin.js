@@ -41,7 +41,7 @@ export class JenkinsFetcher {
 
         // fetch the job info from Jenkins
         const changeJob = this.convertToJenkinsJob(changeNumber, patchsetNumber);
-        const jobResponse = await this.doJenkinsFetch(changeJob, "api/json?tree=name,url,buildable,inQueue,builds[building,duration,estimatedDuration,timestamp,result,number]")
+        const jobResponse = await this.doJenkinsFetch(changeJob, "api/json?tree=name,url,buildable,inQueue,builds[building,duration,estimatedDuration,timestamp,result,number],lastBuild[number]")
         if (!jobResponse.ok) {
             // just return an empty response on an error
             return result;
@@ -51,17 +51,23 @@ export class JenkinsFetcher {
         // convert the job to a Gerrit check result
         if (job.builds.length == 0) {
             // add a single run to provide a link to the jenkins job
-            result.runs = await this.buildRun(job, null);
+            result.runs = await this.buildRun(changeNumber, patchsetNumber, job, null);
         } else {
             // convert the builds to Gerrit check runs
-            result.runs = await Promise.all(job.builds.map(async (build) => await this.buildRun(job, build), this));
+            result.runs = await Promise.all(job.builds.map(async (build) => await this.buildRun(changeNumber, patchsetNumber, job, build), this));
         }
+
+        // now check warnings plugin
+        let warningResults = await this.buildWarnings(changeNumber, patchsetNumber, job);
+        result.runs.push(...warningResults);
 
         return result;
     }
 
-    async buildRun(job, build) {
+    async buildRun(changeNumber, patchsetNumber, job, build) {
         const run = {
+            change: changeNumber,
+            patchset: patchsetNumber,
             checkName: 'Jenkins',
             statusLink: job.url,
             labelName: 'Verified',
@@ -172,6 +178,53 @@ export class JenkinsFetcher {
         }
 
         return stages.reduce(toStageResults, []);
+    }
+
+    async buildWarnings(changeNumber, patchsetNumber, job) {
+        // first find all the configured tools, may be a 404 so use a try
+        let toolsResult = await this.doJenkinsFetch(job.name, `${job.lastBuild.number}/warnings-ng/api/json?tree=tools[id,name,size,latestUrl]`);
+
+        if (!toolsResult.ok) {
+            return [];
+        }
+        let toolsInfo = await toolsResult.json();
+
+        return (await Promise.all(toolsInfo.tools.map(async tool => {
+            if (tool.size == 0) {
+                return [];
+            }
+            let toolResult = await this.doJenkinsFetch(job.name, `${job.lastBuild.number}/${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`);
+            if (!toolResult.ok) {
+                return [];
+            }
+
+            let warnings = await toolResult.json();
+
+            return [{
+                change: changeNumber,
+                patchset: patchsetNumber,
+                checkName: tool.name,
+                status: RunStatus.COMPLETED,
+                statusLink: tool.latestUrl,
+                actions: [],
+                results: warnings.issues.map(issue => {
+                    return {
+                        category: (issue.severity == "ERROR") ? Category.ERROR : Category.WARNING,
+                        summary: issue.message,
+                        message: issue.toString,
+                        codePointers: [{
+                            path: issue.fileName,
+                            range: {
+                                start_line: issue.lineStart,
+                                start_character: issue.columnStart - 1,
+                                end_line: issue.lineEnd,
+                                end_character: issue.columnEnd
+                            }
+                        }]
+                    };
+                })
+            }];
+        }))).flat();
     }
 }
 
