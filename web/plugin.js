@@ -58,8 +58,10 @@ export class JenkinsFetcher {
         );
 
         // now check warnings plugin
-        let warningResults = await this.buildWarnings(changeNumber, patchsetNumber, job);
-        result.runs.push(...warningResults);
+        if (job.lastBuild) {
+            let warningResults = await this.buildWarnings(changeNumber, patchsetNumber, job);
+            result.runs.push(...warningResults);
+        }
 
         return result;
     }
