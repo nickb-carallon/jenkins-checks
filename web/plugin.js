@@ -49,13 +49,13 @@ export class JenkinsFetcher {
         const job = await jobResponse.json();
 
         // convert the job to a Gerrit check result
-        if (job.builds.length == 0) {
-            // add a single run to provide a link to the jenkins job
-            result.runs = await this.buildRun(changeNumber, patchsetNumber, job, null);
-        } else {
-            // convert the builds to Gerrit check runs
-            result.runs = await Promise.all(job.builds.map(async (build) => await this.buildRun(changeNumber, patchsetNumber, job, build), this));
-        }
+        result.runs = await Promise.all(
+            (job.builds.length == 0) ?
+                // add a single run to provide a link to the jenkins job
+                [ this.buildRun(changeNumber, patchsetNumber, job, null) ] :
+                // convert the builds to Gerrit check runs
+                job.builds.map((build) => this.buildRun(changeNumber, patchsetNumber, job, build), this)
+        );
 
         // now check warnings plugin
         let warningResults = await this.buildWarnings(changeNumber, patchsetNumber, job);
