@@ -142,11 +142,11 @@ export class JenkinsFetcher {
                     if (build.result == "SUCCESS") {
                         return [{
                             category: Category.SUCCESS,
-                            summery: 'Build was successfully completed'
+                            summary: 'Build completed successfully'
                         }]
                     }
                 }
-                // for builds in progess, and those that completed successfully, return no results
+                // for builds in progess return no results
                 return [];
             })();
         }
