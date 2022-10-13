@@ -183,26 +183,28 @@ export class JenkinsFetcher {
     }
 
     async buildWarnings(changeNumber, patchsetNumber, job) {
-        // first find all the configured tools, may be a 404 so use a try
-        let toolsResult = await this.doJenkinsFetch(job.name, `${job.lastBuild.number}/warnings-ng/api/json?tree=tools[id,name,size,latestUrl]`);
 
+        const toolsResult = await this.doJenkinsFetch(job.name, `${job.lastBuild.number}/warnings-ng/api/json?tree=tools[id,name,size,latestUrl]`);
         if (!toolsResult.ok) {
             return [];
         }
-        let toolsInfo = await toolsResult.json();
 
-        return (await Promise.all(toolsInfo.tools.map(async tool => {
+        const toolsInfo = await toolsResult.json();
+
+        // use standard for loop as using awaits
+        let runs = [];
+        for (const tool of toolsInfo.tools) {
             if (tool.size == 0) {
-                return [];
+                continue;
             }
-            let toolResult = await this.doJenkinsFetch(job.name, `${job.lastBuild.number}/${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`);
+
+            const toolResult = await this.doJenkinsFetch(job.name, `${job.lastBuild.number}/${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`);
             if (!toolResult.ok) {
-                return [];
+                continue;
             }
 
-            let warnings = await toolResult.json();
-
-            return [{
+            const warnings = await toolResult.json();
+            runs.push({
                 change: changeNumber,
                 patchset: patchsetNumber,
                 checkName: tool.name,
@@ -225,8 +227,10 @@ export class JenkinsFetcher {
                         }]
                     };
                 })
-            }];
-        }))).flat();
+            });
+        }
+
+        return runs;
     }
 }
 
