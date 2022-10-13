@@ -9,10 +9,14 @@ export class JenkinsFetcher {
         this.config = null;
     }
 
+    makeJenkinsUrl(job, url) {
+        return `${this.config.instance}/job/${this.config.job}/job/${job}/${url}`;
+    }
+
     doJenkinsFetch(job, url, method = "GET") {
         const creds = btoa(`${this.config.username}:${this.config.token}`);
         const auth = { "Authorization" : `Basic ${creds}` };
-        return fetch(`${this.config.instance}/job/${this.config.job}/job/${job}/${url}`, {
+        return fetch(this.makeJenkinsUrl(job, url), {
             headers : auth,
             method: method
         });
@@ -57,10 +61,13 @@ export class JenkinsFetcher {
                 job.builds.map((build) => this.buildRun(changeNumber, patchsetNumber, job, build), this)
         );
 
-        // now check warnings plugin
         if (job.lastBuild) {
+            // now check warnings plugin
             let warningResults = await this.buildWarnings(changeNumber, patchsetNumber, job);
-            result.runs.push(...warningResults);
+            // and test results
+            let testResults = await this.buildTestResults(changeNumber, patchsetNumber, job);
+
+            result.runs.push(...warningResults, ...testResults);
         }
 
         return result;
@@ -232,6 +239,37 @@ export class JenkinsFetcher {
 
         return runs;
     }
+
+    async buildTestResults(changeNumber, patchsetNumber, job) {
+
+        const testResult = await this.doJenkinsFetch(job.name, `${job.lastBuild.number}/testReport/api/json?tree=suites[cases[className,name,status,errorDetails]]`);
+        if (!testResult.ok) {
+            return [];
+        }
+
+        const testReport = await testResult.json();
+
+        return [{
+            change: changeNumber,
+            patchset: patchsetNumber,
+            checkName: "Tests",
+            status: RunStatus.COMPLETED,
+            statusLink: this.makeJenkinsUrl(job.name, `${job.lastBuild.number}/testReport`),
+            actions: [],
+            results: testReport.suites.flatMap(suite => {
+                return suite.cases.filter(testCase => {
+                    return (testCase.status == "FAILED")
+                }).map(testCase => {
+                    return {
+                        category: Category.ERROR,
+                        summary: `${testCase.className}.${testCase.name} test failed`,
+                        message: (testCase.status == "FAILED") ? testCase.errorDetails : null
+                    };
+                });
+            })
+        }];
+    }
+
 }
 
 window.Gerrit.install(plugin => {
